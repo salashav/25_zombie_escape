@@ -73,11 +73,15 @@ class Player:
         self.rect = pygame.Rect(x, y, 32, 32)
         self.color = (60, 160, 220)
 
-        # Each bullet is stored as:
-        # [x, y, velocity_x, velocity_y]
         self.bullets = []
-
         self.shoot_cooldown = 0
+
+        # Ammo system
+        self.max_ammo = 12
+        self.ammo = self.max_ammo
+        self.reload_time = 2.0
+        self.reload_start = None
+        self.reloading = False
 
     def move(self, keys, width, height):
         dx = dy = 0
@@ -108,6 +112,15 @@ class Player:
             self.shoot_cooldown -= 1
 
     def shoot(self, target_pos):
+        # Cannot shoot while reloading
+        if self.reloading:
+            return
+
+        # Cannot shoot without ammo
+        if self.ammo <= 0:
+            self.start_reload()
+            return
+
         if self.shoot_cooldown > 0:
             return
 
@@ -132,7 +145,37 @@ class Player:
             vy
         ])
 
+        # Decrease ammo after shooting
+        self.ammo -= 1
+
         self.shoot_cooldown = 15
+
+        # Automatically start reload when clip becomes empty
+        if self.ammo == 0:
+            self.start_reload()
+
+    def start_reload(self):
+        if not self.reloading:
+            self.reloading = True
+            self.reload_start = time.time()
+
+    def update_reload(self):
+        if not self.reloading:
+            return
+
+        elapsed = time.time() - self.reload_start
+
+        if elapsed >= self.reload_time:
+            self.ammo = self.max_ammo
+            self.reloading = False
+            self.reload_start = None
+
+    def get_reload_remaining(self):
+        if not self.reloading:
+            return 0.0
+
+        elapsed = time.time() - self.reload_start
+        return max(0.0, self.reload_time - elapsed)
 
     def update_bullets(self, width, height):
         live = []
@@ -245,6 +288,8 @@ class GameEngine:
             HEIGHT
         )
 
+        self.player.update_reload()
+
         self.player.update_bullets(
             WIDTH,
             HEIGHT
@@ -352,11 +397,19 @@ class GameEngine:
             hud_bg
         )
 
+        if self.player.reloading:
+            reload_remaining = self.player.get_reload_remaining()
+
+            ammo_text = f"RELOADING {reload_remaining:.1f}s"
+
+        else:
+            ammo_text = f"Ammo: {self.player.ammo}/12"
+
         hud = self.font.render(
             f"Wave: {self.wave}  "
             f"Score: {self.score}  "
             f"Kills: {self.kills}/{self.kills_to_next}  |  "
-            f"WASD Move, Click Shoot, R Restart",
+            f"{ammo_text}",
             True,
             (160, 220, 120)
         )
