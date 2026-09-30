@@ -112,11 +112,9 @@ class Player:
             self.shoot_cooldown -= 1
 
     def shoot(self, target_pos):
-        # Cannot shoot while reloading
         if self.reloading:
             return
 
-        # Cannot shoot without ammo
         if self.ammo <= 0:
             self.start_reload()
             return
@@ -145,12 +143,9 @@ class Player:
             vy
         ])
 
-        # Decrease ammo after shooting
         self.ammo -= 1
-
         self.shoot_cooldown = 15
 
-        # Automatically start reload when clip becomes empty
         if self.ammo == 0:
             self.start_reload()
 
@@ -209,6 +204,82 @@ class Player:
             )
 
 
+class Barrel:
+    def __init__(self, x, y):
+        self.rect = pygame.Rect(x, y, 32, 40)
+        self.exploded = False
+
+    def draw(self, screen):
+        if self.exploded:
+            return
+
+        pygame.draw.rect(
+            screen,
+            (150, 80, 30),
+            self.rect,
+            border_radius=5
+        )
+
+        pygame.draw.line(
+            screen,
+            (70, 35, 15),
+            (self.rect.x, self.rect.y + 10),
+            (self.rect.right, self.rect.y + 10),
+            3
+        )
+
+        pygame.draw.line(
+            screen,
+            (70, 35, 15),
+            (self.rect.x, self.rect.y + 30),
+            (self.rect.right, self.rect.y + 30),
+            3
+        )
+
+        pygame.draw.circle(
+            screen,
+            (240, 190, 40),
+            self.rect.center,
+            5
+        )
+
+
+class Explosion:
+    def __init__(self, x, y, radius=100):
+        self.x = x
+        self.y = y
+        self.radius = radius
+        self.start_time = time.time()
+        self.duration = 0.35
+
+    def draw(self, screen):
+        elapsed = time.time() - self.start_time
+
+        if elapsed >= self.duration:
+            return
+
+        progress = elapsed / self.duration
+        current_radius = int(self.radius * progress)
+
+        pygame.draw.circle(
+            screen,
+            (255, 180, 30),
+            (self.x, self.y),
+            max(5, current_radius),
+            6
+        )
+
+        pygame.draw.circle(
+            screen,
+            (255, 230, 80),
+            (self.x, self.y),
+            max(3, current_radius // 2)
+        )
+
+    def finished(self):
+        return time.time() - self.start_time >= self.duration
+
+
 class GameEngine:
     def __init__(self):
         pygame.init()
@@ -249,6 +320,16 @@ class GameEngine:
             for _ in range(4)
         ]
 
+        # Exactly 4 explosive barrels
+        self.barrels = [
+            Barrel(100, 100),
+            Barrel(WIDTH - 140, 100),
+            Barrel(100, HEIGHT - 100),
+            Barrel(WIDTH - 140, HEIGHT - 100)
+        ]
+
+        self.explosions = []
+
         self.score = 0
         self.wave = 1
         self.kills = 0
@@ -275,6 +356,37 @@ class GameEngine:
                 self.player.shoot(event.pos)
 
         return True
+
+    def explode_barrel(self, barrel):
+        barrel.exploded = True
+
+        explosion = Explosion(
+            barrel.rect.centerx,
+            barrel.rect.centery,
+            radius=100
+        )
+
+        self.explosions.append(explosion)
+
+        # Destroy all zombies inside the explosion radius
+        zombies_to_remove = []
+
+        for zombie in self.zombies:
+            dx = zombie.rect.centerx - barrel.rect.centerx
+            dy = zombie.rect.centery - barrel.rect.centery
+
+            distance = math.sqrt(
+                dx ** 2 + dy ** 2
+            )
+
+            if distance <= explosion.radius:
+                zombies_to_remove.append(zombie)
+
+        for zombie in zombies_to_remove:
+            if zombie in self.zombies:
+                self.zombies.remove(zombie)
+                self.kills += 1
+                self.score += 10
 
     def update(self):
         if self.game_over:
@@ -309,6 +421,7 @@ class GameEngine:
             ):
                 self.game_over = True
 
+        # Check bullet collisions with zombies
         dead = []
 
         for zombie in self.zombies:
@@ -339,6 +452,38 @@ class GameEngine:
                 self.kills += 1
                 self.score += 10
 
+        # Check bullet collisions with barrels
+        for barrel in self.barrels:
+
+            if barrel.exploded:
+                continue
+
+            for bullet in self.player.bullets[:]:
+
+                bx = int(bullet[0])
+                by = int(bullet[1])
+
+                if barrel.rect.collidepoint(
+                    bx,
+                    by
+                ):
+
+                    if bullet in self.player.bullets:
+                        self.player.bullets.remove(
+                            bullet
+                        )
+
+                    self.explode_barrel(barrel)
+                    break
+
+        # Remove finished explosion effects
+        self.explosions = [
+            explosion
+            for explosion in self.explosions
+            if not explosion.finished()
+        ]
+
+        # Wave progression
         if self.kills >= self.kills_to_next:
 
             self.kills = 0
@@ -379,10 +524,20 @@ class GameEngine:
                 1
             )
 
+        # Draw barrels
+        for barrel in self.barrels:
+            barrel.draw(self.screen)
+
+        # Draw zombies
         for zombie in self.zombies:
             zombie.draw(self.screen)
 
+        # Draw player
         self.player.draw(self.screen)
+
+        # Draw explosion effects
+        for explosion in self.explosions:
+            explosion.draw(self.screen)
 
         hud_bg = pygame.Rect(
             0,
@@ -398,12 +553,20 @@ class GameEngine:
         )
 
         if self.player.reloading:
-            reload_remaining = self.player.get_reload_remaining()
+            reload_remaining = (
+                self.player.get_reload_remaining()
+            )
 
-            ammo_text = f"RELOADING {reload_remaining:.1f}s"
+            ammo_text = (
+                f"RELOADING "
+                f"{reload_remaining:.1f}s"
+            )
 
         else:
-            ammo_text = f"Ammo: {self.player.ammo}/12"
+            ammo_text = (
+                f"Ammo: "
+                f"{self.player.ammo}/12"
+            )
 
         hud = self.font.render(
             f"Wave: {self.wave}  "
